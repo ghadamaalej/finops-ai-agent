@@ -20,7 +20,7 @@ azure-mgmt-compute>=33.0.0
 azure-mgmt-costmanagement>=4.0.0
 azure-mgmt-monitor>=6.0.0
 azure-mgmt-network>=25.0.0
-azure-mgmt-policyinsights>=1.1.0
+azure-mgmt-policyinsights==1.1.0b6
 azure-mgmt-resource>=23.0.0
 azure-mgmt-resourcegraph>=8.0.0
 azure-mgmt-security>=6.0.0
