@@ -1,16 +1,17 @@
 fastapi>=0.111.0
 uvicorn>=0.30.0
-
 python-dotenv>=1.0.0
 pydantic>=2.7.0
 pydantic-settings>=2.0.0
 PyJWT[crypto]>=2.8.0
-
 requests>=2.31.0
 httpx>=0.27.0
 
 SQLAlchemy>=2.0.0
 psycopg2-binary>=2.9.9
+
+langchain-openai
+openai
 
 azure-core>=1.30.0
 azure-identity>=1.17.0
@@ -20,7 +21,7 @@ azure-mgmt-compute>=33.0.0
 azure-mgmt-costmanagement>=4.0.0
 azure-mgmt-monitor>=6.0.0
 azure-mgmt-network>=25.0.0
-azure-mgmt-policyinsights==1.1.0b6             
+azure-mgmt-policyinsights==1.1.0b6
 azure-mgmt-resource>=23.0.0
 azure-mgmt-resourcegraph>=8.0.0
 azure-mgmt-security>=6.0.0
@@ -28,7 +29,6 @@ azure-mgmt-storage>=21.0.0
 
 langgraph>=0.2.0
 langchain-core>=0.3.0
-langchain-ollama>=0.2.0
 langsmith>=0.2.0
 
 numpy>=1.26.0

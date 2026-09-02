@@ -267,6 +267,48 @@ class AzureRetailPriceService:
         return result
 
     # =========================================================
+    # VM SKU DISCOVERY
+    # =========================================================
+
+    def get_compatible_vm_skus(
+        self,
+        region: str,
+        current_sku: str,
+        os_type: str | None = None,
+    ) -> list[str]:
+        '''Return only smaller SKUs present in the Retail Prices catalog.'''
+        # Compatibility is limited to the current SKU family and actual
+        # catalog records; this method never manufactures a SKU name.
+        import re
+        match = re.fullmatch(r"(Standard_[A-Za-z]+?)(\d+)(.*)", str(current_sku or "").strip())
+        if not match:
+            return []
+        family, current_size, suffix = match.group(1), int(match.group(2)), match.group(3)
+        region = str(region or "").strip().lower()
+        if not region or current_size <= 1:
+            return []
+        filter_expression = " and ".join([
+            "serviceName eq 'Virtual Machines'",
+            "priceType eq 'Consumption'",
+            f"armRegionName eq '{self._escape(region)}'",
+        ])
+        cache_key = ("virtual machines", region, "__sku_catalog__", "", "Consumption")
+        items = self._get_cached_items(cache_key, filter_expression)
+        discovered = set()
+        for item in items:
+            arm_sku = str(item.get("armSkuName") or "").strip()
+            candidate_match = re.fullmatch(r"(Standard_[A-Za-z]+?)(\d+)(.*)", arm_sku)
+            if not candidate_match:
+                continue
+            if candidate_match.group(1) != family or candidate_match.group(3) != suffix:
+                continue
+            if int(candidate_match.group(2)) >= current_size:
+                continue
+            if self._validate_vm_price_candidate(item, arm_sku, os_type) is None:
+                discovered.add(arm_sku)
+        return sorted(discovered, key=lambda sku: int(re.fullmatch(r"(Standard_[A-Za-z]+?)(\d+)(.*)", sku).group(2)))
+
+    # =========================================================
     # VM PRICE
     # =========================================================
 

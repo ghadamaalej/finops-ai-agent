@@ -40,7 +40,65 @@ def _canonical_summary(summary):
     return {**summary, "cost": cost}
 
 
-INTENTS = ("cost", "savings", "savings_analysis", "resources", "resource_listing", "resource_status", "inventory", "metrics", "metrics_history", "performance", "security", "governance", "recommendations", "sku_comparison", "execution", "actions", "finops_summary", "finops_reasoning", "out_of_scope")
+INTENTS = ("cost", "savings", "savings_analysis", "resources", "resource_listing", "resource_status", "inventory", "metrics", "metrics_history", "performance", "security", "governance", "recommendations", "sku_comparison", "approval", "registry_analysis", "execution", "actions", "finops_summary", "finops_reasoning", "out_of_scope")
+
+
+def _conversation_state(value):
+    '''Return the bounded, client-carried conversation state contract.'''
+    state = value if isinstance(value, dict) else {}
+    return {
+        "active_resource": state.get("active_resource") or state.get("resource"),
+        "active_recommendation": state.get("active_recommendation"),
+        "active_comparison": state.get("active_comparison"),
+        "active_task": state.get("active_task"),
+    }
+
+
+def _state_resource(state):
+    resource = state.get("active_resource")
+    if not isinstance(resource, dict):
+        return None
+    return resource
+
+def _state_with_resource(state, target):
+    if not target or not target.get("resource_id"):
+        return state
+    return {**state, "active_resource": {
+        "name": target.get("resource_name") or target["resource_id"].rsplit("/", 1)[-1],
+        "resource_id": target["resource_id"],
+        "resource_group": _resource_group(target["resource_id"]),
+        "resource_type": target.get("resource_type"),
+    }}
+
+
+def _comparison_state(response, state):
+    best = response.get("best_candidate") or {}
+    current = response.get("current_configuration") or {}
+    target = response.get("resource_context") or {}
+    return {
+        **_state_with_resource(state, {"resource_id": response.get("resource_id"), "resource_name": response.get("resource"), "resource_type": target.get("resource_type")}),
+        "active_comparison": {"current_sku": current.get("sku"), "candidate_sku": best.get("sku"), "candidate_monthly_cost": best.get("monthly_cost"), "current_monthly_cost": current.get("monthly_cost"), "estimated_savings": best.get("savings"), "savings_percentage": best.get("savings_percentage"), "pricing_source": best.get("pricing_source"), "validated": best.get("validated", False)},
+        "active_task": {"intent": response.get("intent") or "sku_comparison", "pending_action": "compare_vm_sku"},
+    }
+
+
+def _registry_analysis_response(context, resolution, request_id):
+    target = (resolution.get("target_resources") or [{}])[0]
+    evidence = (context.get("resource_evidence") or [{}])[0]
+    metrics = evidence.get("metrics") or {}
+    missing = [name for name in ("StorageUsed", "TotalPullCount", "TotalPushCount") if metrics.get(name) is None]
+    resource = target.get("resource_name") or "the resolved registry"
+    if missing:
+        return {"answer": f"Image age and reference evidence is unavailable for {resource}: missing {', '.join(missing)}.", "intent": "registry_analysis", "status": "insufficient_evidence", "resource": resource, "resource_id": target.get("resource_id"), "recommendation": "insufficient_evidence", "action": None, "missing_evidence": missing, "read_only": True, "llm_used": False, "fallback_used": False, "request_id": request_id}
+    return {"answer": f"Registry analysis for {resource} is available from persisted image evidence.", "intent": "registry_analysis", "status": "available", "resource": resource, "resource_id": target.get("resource_id"), "recommendation": "Review image age and references before enabling retention.", "action": "review_image_retention", "read_only": True, "llm_used": False, "fallback_used": False, "request_id": request_id}
+
+
+def _comparison_approval_response(state, request_id):
+    comparison = state.get("active_comparison") or {}
+    resource = _state_resource(state) or {}
+    if not comparison.get("candidate_sku") or not comparison.get("validated"):
+        return {"answer": "No valid compatible SKU comparison is available in the current conversation.", "intent": "approval", "status": "no_approval_candidate_in_context", "resource": resource.get("name"), "execution_started": False, "read_only": True, "llm_used": False, "fallback_used": False, "request_id": request_id, "conversation_state": state}
+    return {"answer": f"Pending approval for {resource.get('name') or 'the resolved VM'}: approve {comparison['candidate_sku']} instead of {comparison.get('current_sku')}. Estimated savings are {_money(comparison.get('estimated_savings'))}/month.", "intent": "approval", "status": "pending_approval", "resource": resource.get("name"), "resource_id": resource.get("resource_id"), "current_sku": comparison.get("current_sku"), "proposed_sku": comparison.get("candidate_sku"), "current_monthly_cost": comparison.get("current_monthly_cost") or state.get("active_recommendation", {}).get("current_estimated_cost") or state.get("active_recommendation", {}).get("current_cost"), "proposed_monthly_cost": comparison.get("candidate_monthly_cost"), "estimated_monthly_savings": comparison.get("estimated_savings"), "savings_percentage": comparison.get("savings_percentage"), "pricing_source": comparison.get("pricing_source"), "validated": True, "execution_started": False, "read_only": True, "llm_used": False, "fallback_used": False, "request_id": request_id, "conversation_state": {**state, "active_task": {"intent": "approval", "pending_action": "approve_vm_sku"}}}
 OUT_OF_SCOPE_ANSWER = "I can only help with Azure FinOps, cost optimization, resources, performance, security, governance, recommendations, and agent activity."
 
 
@@ -55,6 +113,7 @@ def classify_question_intent(message):
         "savings": ("saving", "save", "optimization", "optimisation", "opportunit"),
         "recommendations": ("recommend", "recommendation", "recommendations", "what should i", "suggest"),
         "sku_comparison": ("sku", "smaller sku", "smaller skus", "compare sku", "compare smaller", "downgrade"),
+        "registry_analysis": ("image age", "image ages", "image reference", "image references", "review images", "unused images", "retention policy", "retention", "delete unused images"),
     }
     matched_domains = sum(any(term in question for term in terms) for terms in domains.values())
     reasoning_terms = ("priority", "priorities", "focus first", "top 3", "top three", "why")
@@ -67,6 +126,10 @@ def classify_question_intent(message):
     status_request = resource_request and any(term in question for term in ("status", "state", "power", "running", "provisioning", "location", "region"))
     listing_request = resource_request and any(term in question for term in ("list", "show", "display", "what", "inventory", "existing", "available")) and not status_request
     history_request = any(term in question for term in ("over time", "history", "historical", "trend", "graph", "chart", "visualize", "visualise"))
+    if any(term in question for term in ("approve", "approval", "approve it", "approve this")):
+        return "approval"
+    if any(term in question for term in domains["registry_analysis"]):
+        return "registry_analysis"
     if savings_analysis:
         return "savings_analysis"
     if status_request:
@@ -83,7 +146,7 @@ def classify_question_intent(message):
         ("execution", ("execution", "executed", "run result")),
         ("actions", ("agent action", "actions", "verification status", "what did the agent")),
         ("security", domains["security"]), ("governance", domains["governance"]),
-        ("metrics_history", domains["metrics"] if history_request else ()), ("metrics", domains["metrics"]), ("performance", domains["performance"]), ("sku_comparison", domains["sku_comparison"]), ("recommendations", domains["recommendations"]),
+        ("registry_analysis", domains["registry_analysis"]), ("metrics_history", domains["metrics"] if history_request else ()), ("metrics", domains["metrics"]), ("performance", domains["performance"]), ("sku_comparison", domains["sku_comparison"]), ("recommendations", domains["recommendations"]),
         ("savings", domains["savings"]), ("resources", ("resource", "resources", "service", "driver", "expensive", "highest")),
         ("cost", domains["cost"]),
         ("finops_summary", ("finops", "health", "healthy", "overall", "status", "risk", "summarize", "summary")),
@@ -155,26 +218,44 @@ def _resource_candidates(summary):
 def resolve_question(message, summary, history=None, conversation_context=None):
     # Resolve the current question first, then use explicit conversation context for referents.
     conversation_context = conversation_context or {}
-    context_resource = conversation_context.get("resource") if isinstance(conversation_context, dict) else None
+    context_resource = None
+    if isinstance(conversation_context, dict):
+        context_resource = conversation_context.get("active_resource") or conversation_context.get("resource")
     question = message.casefold()
-    follow_up_terms = ("what should i do next", "why", "can i approve it", "what happens after approval", "compare smaller sku", "compare smaller skus", "smaller sku", "compare sku", "compatible smaller", "smaller vm sku", "how much could i save", "how much can i save", "how much would i save")
+    follow_up_terms = ("what should i do next", "why", "can i approve it", "what happens after approval", "compare it", "this vm", "that vm", "this resource", "that resource", "compare smaller sku", "compare smaller skus", "smaller sku", "compare sku", "compatible smaller", "smaller vm sku", "how much could i save", "how much can i save", "how much would i save", "review image age", "review image references", "review images", "unused images", "retention policy", "delete unused images")
     dimensions = [name for name, terms in DIMENSION_TERMS.items() if any(term in question for term in terms)]
     candidates = _resource_candidates(summary)
 
     def exact_matches(text):
         normalized = _normalise_entity(text)
-        return [
+        matches = [
             candidate for candidate in candidates
             if (_normalise_entity(candidate["resource_name"]) and _normalise_entity(candidate["resource_name"]) in normalized)
             or (_normalise_entity(candidate["resource_id"]) and _normalise_entity(candidate["resource_id"]) in normalized)
         ]
+        # Resource names often share a prefix (VM, OS disk, NIC, Public IP).
+        # Prefer the exact name/ID, otherwise choose the longest matching name;
+        # never let the parent VM shadow the specifically requested resource.
+        exact = [candidate for candidate in matches if
+                 _normalise_entity(candidate["resource_name"]) == normalized or
+                 _normalise_entity(candidate["resource_id"]) == normalized]
+        if exact:
+            return exact
+        return sorted(matches, key=lambda candidate: len(_normalise_entity(candidate["resource_name"])), reverse=True)[:1]
 
     matches = exact_matches(message)
     if not matches and any(term in question for term in follow_up_terms):
-        # A follow-up inherits only an exact target from a prior user turn.
-        # Never infer a target from an assistant's global cost or recommendation text.
-        if isinstance(context_resource, dict) and context_resource.get("resource_id"):
-            matches = [{"resource_id": context_resource["resource_id"], "resource_name": context_resource.get("name") or context_resource["resource_id"].rsplit("/", 1)[-1], "resource_type": context_resource.get("type")}]
+        # A follow-up inherits only the exact target saved by the client or a
+        # prior user turn. Resolve that reference against the current summary
+        # so the subsequent evidence projection has the real VM identity.
+        if isinstance(context_resource, dict) and (context_resource.get("resource_id") or context_resource.get("name")):
+            context_id = str(context_resource.get("resource_id") or "").casefold()
+            context_name = _normalise_entity(context_resource.get("name"))
+            matches = [candidate for candidate in candidates if
+                       (context_id and candidate["resource_id"].casefold() == context_id) or
+                       (context_name and _normalise_entity(candidate["resource_name"]) == context_name)]
+            if not matches and context_resource.get("resource_id"):
+                matches = [{"resource_id": context_resource["resource_id"], "resource_name": context_resource.get("name") or context_resource["resource_id"].rsplit("/", 1)[-1], "resource_type": context_resource.get("type")}]
         for item in reversed(history or []):
             if matches:
                 break
@@ -194,6 +275,12 @@ def resolve_question(message, summary, history=None, conversation_context=None):
             if score >= 0.86:
                 matches.append(candidate)
     intent = classify_question_intent(message)
+    if intent == "sku_comparison" and not matches:
+        # A bare comparison can safely target the sole VM in the connected
+        # summary, but never guess among multiple VMs.
+        vm_candidates = [candidate for candidate in candidates if "virtualmachines" in str(candidate.get("resource_type") or "").casefold()]
+        if len(vm_candidates) == 1:
+            matches = vm_candidates
     if matches and intent not in {"metrics", "metrics_history", "recommendations", "sku_comparison", "savings_analysis", "resource_listing", "resource_status", "inventory", "execution"} and (len(dimensions) >= 2 or any(term in question for term in ("analyze", "analyse", "recommendation for", "recommend for"))):
         intent = "finops_reasoning"
     route = [dimension for dimension in ("cost", "metrics", "utilization", "security", "governance", "savings") if dimension in dimensions]
@@ -420,44 +507,55 @@ def _metrics_visualizations(metric, evidence):
 def _sku_comparison_response(context, resolution, request_id):
     target = (resolution.get("target_resources") or [{}])[0]
     evidence = (context.get("resource_evidence") or [{}])[0]
+    if "virtualmachines" not in str(evidence.get("resource_type") or target.get("resource_type") or "").casefold():
+        return {"answer": f"SKU comparison is only supported for a resolved virtual machine; {target.get('resource_name') or 'the resolved resource'} is not a VM.", "evidence": [], "comparisons": [], "recommendations": [], "intent": resolution.get("intent") or "sku_comparison", "resource": target.get("resource_name"), "resource_id": target.get("resource_id"), "candidates": [], "status": "resource_not_resolved", "reason": "sku_comparison_requires_virtual_machine", "read_only": True, "llm_used": False, "fallback_used": False, "request_id": request_id}
     configuration = evidence.get("configuration") if isinstance(evidence.get("configuration"), dict) else {}
-    current_sku = configuration.get("sku") or configuration.get("sku_name") or "Unavailable"
-    candidates = configuration.get("compatible_smaller_skus", [])
-    if not isinstance(candidates, list):
-        candidates = []
-    if not candidates:
-        match = re.fullmatch(r"(Standard_[A-Za-z]+?)(\d+)(.*)", str(current_sku))
-        if match and int(match.group(2)) > 1:
-            candidates = [f"{match.group(1)}{max(1, int(match.group(2)) // 2)}{match.group(3)}"]
+    current_sku = configuration.get("sku") or configuration.get("sku_name")
     region = evidence.get("region") or configuration.get("region")
     os_type = configuration.get("os_type")
     current_cost = (context.get("cost") or {}).get("monthly")
     comparisons = []
     pricing = AzureRetailPriceService()
+    discovery_reason = None
+    if not current_sku:
+        discovery_reason = "The authoritative current VM SKU was not found in Azure resource evidence."
+        candidates = []
+    elif not region:
+        discovery_reason = "The authoritative Azure region was not found in resource evidence."
+        candidates = []
+    else:
+        candidates = pricing.get_compatible_vm_skus(region, current_sku, os_type)
+        if not candidates:
+            discovery_reason = "Azure Retail Prices returned no compatible smaller SKU candidates for the current SKU family."
     for candidate in candidates:
-        if not isinstance(candidate, str) or not candidate.strip():
-            continue
-        price = pricing.get_vm_price(region, candidate, os_type) if region else None
-        validated = isinstance(price, dict) and price.get("pricing_validated") is True
-        monthly = float(price["retail_price"]) * 730 if validated and price.get("retail_price") is not None else None
-        savings = round(float(current_cost) - monthly, 2) if validated and current_cost is not None and monthly is not None else None
-        comparisons.append({"sku": candidate, "price": round(monthly, 2) if monthly is not None else None, "price_source": "Azure Retail Prices" if validated else None, "savings": savings, "status": "available" if validated else "unavailable", "reason": None if validated else "Azure Retail Prices for a compatible candidate were not collected"})
-    for item in comparisons:
-        item["monthly_cost"] = item["price"]
-        item["estimated_savings"] = item["savings"]
-        item["pricing_source"] = item["price_source"]
-        item["validated"] = item["status"] == "available"
-    for item in comparisons:
-        item.update({"monthly_cost": item["price"], "estimated_savings": item["savings"], "pricing_source": item["price_source"], "validated": item["status"] == "available"})
-    priced = [item for item in comparisons if item["status"] == "available"]
+        price = pricing.get_vm_price(region, candidate, os_type)
+        validated = isinstance(price, dict) and price.get("pricing_validated") is True and price.get("retail_price") is not None
+        monthly = round(float(price["retail_price"]) * 730, 2) if validated else None
+        savings = round(float(current_cost) - monthly, 2) if validated and current_cost is not None else None
+        percentage = round((savings / float(current_cost)) * 100, 2) if savings is not None and float(current_cost) > 0 else None
+        comparisons.append({
+            "sku": candidate, "monthly_cost": monthly, "price": monthly,
+            "savings": savings, "estimated_savings": savings,
+            "savings_percentage": percentage, "pricing_source": "Azure Retail Prices" if validated else None,
+            "price_source": "Azure Retail Prices" if validated else None, "is_estimated": bool(validated),
+            "validated": validated, "status": "available" if validated else "pricing_unavailable",
+            "reason": None if validated else "Azure Retail Prices did not return valid PAYG pricing for this candidate.",
+        })
+    priced = [item for item in comparisons if item["validated"]]
     best = max(priced, key=lambda item: item.get("savings") or 0) if priced else None
-    diagnostics = {"candidate_discovery": {"current_sku": current_sku, "compatible_candidates_found": len(candidates), "reason": "No smaller compatible SKU was derived from the current SKU family." if not candidates else None}, "pricing": {"candidates_priced": len(priced), "reason": None if priced else ("Missing region, OS, or Azure Retail Prices." if candidates else "No compatible candidates to price.")}}
-    suffix = f" Validated candidate pricing is available for {len(priced)} compatible SKU(s)." if priced else " Savings not quantifiable because validated compatible candidate SKUs and Azure Retail Prices are unavailable."
-    return {"answer": f"SKU comparison for {target.get('resource_name') or 'the resolved resource'}: current SKU is {current_sku}.{suffix}", "evidence": [{"label": "Current SKU", "value": current_sku, "resource_name": target.get("resource_name"), "resource_id": target.get("resource_id"), "status": "available" if current_sku != "Unavailable" else "unavailable"}, *comparisons], "comparisons": comparisons, "recommendations": [], "intent": resolution.get("intent") or "sku_comparison", "resource": target.get("resource_name"), "resource_id": target.get("resource_id"), "resource_context": {**target, "current_sku": current_sku}, "current_configuration": {"sku": current_sku, "monthly_cost": current_cost}, "candidates": comparisons, "best_candidate": best, "savings": {"monthly": best["savings"], "validated": True} if best else {"monthly": None, "validated": False}, "diagnostics": diagnostics, "request_id": request_id, "read_only": True, "llm_used": False, "fallback_used": False, "reason": "retail_price_evidence_available" if priced else "retail_price_evidence_unavailable"}
+    pricing_reason = None if priced else ("No valid Azure Retail Prices were returned for discovered candidates." if candidates else discovery_reason)
+    status = "available" if priced else "pricing_unavailable"
+    answer = f"SKU comparison for {target.get('resource_name') or 'the resolved resource'}: current SKU is {current_sku or 'Unavailable'}."
+    answer += (f" Azure Retail Prices validated {len(priced)} compatible smaller SKU(s)." if priced else f" Pricing unavailable: {pricing_reason or 'no valid candidate pricing was collected.'}")
+    diagnostics = {"candidate_discovery": {"current_sku": current_sku, "region": region, "compatible_candidates_found": len(candidates), "reason": discovery_reason}, "pricing": {"candidates_priced": len(priced), "status": status, "reason": pricing_reason}}
+    return {"answer": answer, "evidence": [{"label": "Current SKU", "value": current_sku, "resource_name": target.get("resource_name"), "resource_id": target.get("resource_id"), "status": "available" if current_sku else "unavailable"}, *comparisons], "comparisons": comparisons, "recommendations": [], "intent": resolution.get("intent") or "sku_comparison", "resource": target.get("resource_name"), "resource_id": target.get("resource_id"), "resource_context": {**target, "current_sku": current_sku, "region": region}, "current_configuration": {"sku": current_sku, "monthly_cost": current_cost}, "candidates": priced, "best_candidate": best, "savings": {"monthly": best["savings"], "percentage": best["savings_percentage"], "validated": True} if best else {"monthly": None, "percentage": None, "validated": False}, "status": status, "diagnostics": diagnostics, "request_id": request_id, "read_only": True, "llm_used": False, "fallback_used": False, "reason": "retail_price_evidence_available" if priced else "retail_price_evidence_unavailable"}
 
 def _metrics_response(context, resolution, request_id):
     target = (resolution.get("target_resources") or [{}])[0]
     response_intent = resolution.get("intent") or "metrics"
+    resource_type = str(target.get("resource_type") or ((context.get("resource_evidence") or [{}])[0].get("resource_type") or "")).casefold()
+    if "virtualmachines" not in resource_type and "disks" not in resource_type:
+        return {"answer": f"Azure Monitor metrics are unavailable for {target.get('resource_name') or 'the resolved resource'} because no supported resource-specific metric evidence was collected.", "evidence": [], "visualizations": [], "recommendations": [], "intent": response_intent, "resource": target.get("resource_name"), "resource_id": target.get("resource_id"), "resource_context": target, "request_id": request_id, "read_only": True, "llm_used": False, "fallback_used": False, "reason": "resource_metrics_unavailable"}
     metric = ((context.get("performance") or {}).get("resources") or [{}])[0]
     values = metric.get("values") if isinstance(metric, dict) and isinstance(metric.get("values"), dict) else {}
     metric_names = metric.get("metric_names") if isinstance(metric, dict) and isinstance(metric.get("metric_names"), list) else list(values)
@@ -489,7 +587,7 @@ def _metrics_response(context, resolution, request_id):
     return {"answer": "\n".join(answer_lines), "evidence": evidence, "visualizations": _metrics_visualizations(metric_for_visualization, evidence), "recommendations": [], "intent": response_intent, "resource": target.get("resource_name"), "resource_id": target.get("resource_id"), "resource_context": target, "request_id": request_id, "read_only": True, "llm_used": False, "fallback_used": False, "reason": "azure_monitor_persisted_evidence"}
 
 def _deterministic_resource_answer(context, resolution):
-    # Complete canonical evidence proves the resource outcome without Ollama."
+    # Complete canonical evidence proves the resource outcome without the LLM."
     if not resolution.get("target_resources") or context.get("recommendations_all"):
         return False
     evidence = (context.get("resource_evidence") or [{}])[0]
@@ -877,6 +975,24 @@ def _chat_response(answer, evidence, context, resolution, request_id):
         "next_step": next_step,
         "resource": decision.get("resource_name") if decision else target.get("resource_name"),
         "resource_id": decision.get("resource_id") if decision else target.get("resource_id"),
+        "conversation_state": {
+            "active_resource": {
+                "name": decision.get("resource_name") if decision else target.get("resource_name"),
+                "resource_id": decision.get("resource_id") if decision else target.get("resource_id"),
+                "resource_group": _resource_group(decision.get("resource_id") if decision else target.get("resource_id")),
+                "resource_type": decision.get("resource_type") if decision else target.get("resource_type"),
+            } if (decision or target.get("resource_id")) else None,
+            "active_recommendation": canonical_recommendation,
+            "active_comparison": None,
+            "active_task": {"intent": resolution.get("intent"), "pending_action": next_step},
+        },
+        "resource_context": {
+            "name": decision.get("resource_name") if decision else target.get("resource_name"),
+            "resource_name": decision.get("resource_name") if decision else target.get("resource_name"),
+            "resource_id": decision.get("resource_id") if decision else target.get("resource_id"),
+            "type": decision.get("resource_type") if decision else target.get("resource_type"),
+            "resource_type": decision.get("resource_type") if decision else target.get("resource_type"),
+        } if (decision or target.get("resource_id")) else None,
         "monthly_cost": cost,
         "cost_status": cost_status,
         "cost_source": cost_source,
@@ -1019,9 +1135,32 @@ def agent_chat(payload: ChatRequest, credentials: HTTPAuthorizationCredentials =
         subscription_id = _subscription(session, claims)
         summary = _canonical_summary(summary_service.build(session, subscription_id))
         summary["subscription_id"] = subscription_id
-        resolution = resolve_question(message, summary, payload.history, payload.conversation_context)
+        state = _conversation_state(payload.conversation_context)
+        resolution = resolve_question(message, summary, payload.history, {**payload.conversation_context, **state})
         intent = resolution["intent"]
+        if intent == "approval":
+            return _comparison_approval_response(state, request_id) | {"resolution": resolution, "subscription_id": subscription_id}
+        if intent == "registry_analysis" and not resolution["target_resources"]:
+            return {"answer": "I could not resolve the active registry for this request. Please provide the registry name.", "intent": intent, "status": "resource_not_resolved", "resource": None, "recommendation": "insufficient_evidence", "action": None, "read_only": True, "llm_used": False, "fallback_used": False, "candidates": [], "request_id": request_id, "resolution": resolution, "subscription_id": subscription_id}
+        resource_follow_up_terms = ("image", "disk", "workload", "attachment", "sku", "retention", "unused")
+        if not resolution["target_resources"] and any(term in message.casefold() for term in resource_follow_up_terms):
+            return {"answer": "The active resource could not be resolved and no resource-specific evidence is available for this request.", "intent": intent, "status": "insufficient_evidence", "resource": None, "recommendation": "insufficient_evidence", "action": None, "read_only": True, "llm_used": False, "fallback_used": False, "candidates": [], "request_id": request_id, "resolution": resolution, "subscription_id": subscription_id}
         recommendations = _chat_recommendations(session, summary, message, resolution["target_resources"])
+        if intent == "sku_comparison" and not resolution["target_resources"]:
+            return {
+                "answer": "I could not resolve a target VM for SKU comparison. Please provide the exact VM name or resource ID.",
+                "status": "resource_not_resolved",
+                "candidates": [],
+                "comparisons": [],
+                "recommendations": [],
+                "intent": intent,
+                "resolution": resolution,
+                "subscription_id": subscription_id,
+                "request_id": request_id,
+                "read_only": True,
+                "llm_used": False,
+                "fallback_used": False,
+            }
         if _is_approval_question(message):
             return _approval_response(recommendations, summary, resolution, request_id) | {
                 "intent": intent,
@@ -1035,14 +1174,28 @@ def agent_chat(payload: ChatRequest, credentials: HTTPAuthorizationCredentials =
         # Inventory responses remain isolated from cost/recommendation formatting.
         if intent in {"resource_listing", "resource_status", "inventory"}:
             return deterministic | {"subscription_id": subscription_id, "resolution": resolution, "conversation_context": payload.conversation_context, "resource_context": payload.conversation_context.get("resource")}
-        # Factual intents and complete target evidence never depend on Ollama.
+        # Factual intents and complete target evidence never depend on the LLM.
         if deterministic is not None and not resolution["target_resources"]:
             return _chat_response(deterministic["answer"], deterministic.get("evidence", []), summary, resolution, request_id) | {"recommendations": recommendations if intent in {"savings", "recommendations"} else [], "intent": intent, "subscription_id": subscription_id, "conversation_context": payload.conversation_context, "read_only": True}
         context = _resource_context(resolution, summary, intent)
+        if intent == "registry_analysis" and resolution["target_resources"]:
+            target = resolution["target_resources"][0]
+            state = _state_with_resource(state, target)
+            return _registry_analysis_response(context, resolution, request_id) | {"resolution": resolution, "subscription_id": subscription_id, "conversation_state": state}
+        # SKU comparison is an evidence operation, not a language operation.
+        # Keep this dispatch before every model prompt/fallback so the LLM can
+        # never replace catalog candidates or pricing with prose.
+        if intent == "sku_comparison" and resolution["target_resources"]:
+            comparison = _sku_comparison_response(context, resolution, request_id)
+            state = _comparison_state(comparison, _state_with_resource(state, resolution["target_resources"][0]))
+            return comparison | {"resolution": resolution, "subscription_id": subscription_id, "conversation_state": state}
+        if intent == "savings_analysis" and resolution["target_resources"]:
+            return _sku_comparison_response(context, resolution, request_id) | {
+                "resolution": resolution,
+                "subscription_id": subscription_id,
+            }
         if intent in {"metrics", "metrics_history"} and resolution["target_resources"]:
             return _metrics_response(context, resolution, request_id) | {"resolution": resolution, "subscription_id": subscription_id}
-        if intent in {"sku_comparison", "savings_analysis"} and resolution["target_resources"]:
-            return _sku_comparison_response(context, resolution, request_id) | {"resolution": resolution, "subscription_id": subscription_id}
         if _deterministic_resource_answer(context, resolution):
             response = _chat_response("", [], context, resolution, request_id)
             response.update({"reason": "canonical_evidence", "llm_used": False, "fallback_used": False, "recommendations": [], "intent": intent, "resolution": resolution, "subscription_id": subscription_id, "read_only": True})
