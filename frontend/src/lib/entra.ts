@@ -2,8 +2,8 @@ import { PublicClientApplication, type AccountInfo } from "@azure/msal-browser";
 
 const tenantId = import.meta.env.VITE_ENTRA_TENANT_ID ?? "efca227f-fc70-4c52-bade-e36ada2a3a40";
 const clientId = import.meta.env.VITE_ENTRA_CLIENT_ID ?? "ca0d73b8-e582-45fe-829d-8213bb022801";
-const redirectUri = import.meta.env.VITE_ENTRA_REDIRECT_URI ?? "http://localhost:5173/signin";
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const redirectUri = import.meta.env.VITE_ENTRA_REDIRECT_URI ?? "https://192.168.108.220/signin";
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "https://192.168.108.220/api";
 const identityTokenKey = "finops.identity.id_token";
 
 export const identityScopes = ["openid", "profile", "email"];
