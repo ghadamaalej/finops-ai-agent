@@ -48,7 +48,7 @@ export async function getResourceInventory(params: { page: number; pageSize: num
   if (params.resourceGroup && params.resourceGroup !== "all") query.set("resource_group", params.resourceGroup);
   if (params.region && params.region !== "all") query.set("region", params.region);
   if (params.status && params.status !== "all") query.set("status", params.status);
-  const response = await fetch(`${apiBaseUrl}/api/dashboard/resources?${query}`, { headers: { Authorization: `Bearer ${getIdentityToken()}` }, signal });
+  const response = await fetch(`${apiBaseUrl}/dashboard/resources?${query}`, { headers: { Authorization: `Bearer ${getIdentityToken()}` }, signal });
   if (!response.ok) { const body = await response.json().catch(() => null) as { detail?: string } | null; throw new Error(body?.detail ?? "Unable to load resource inventory."); }
   return response.json() as Promise<ResourceInventoryResponse>;
 }
@@ -64,7 +64,7 @@ export type ResourceDetails = {
 };
 
 export async function getResourceDetails(resourceId: string, signal?: AbortSignal): Promise<ResourceDetails> {
-  const response = await fetch(`${apiBaseUrl}/api/dashboard/resources/details?resource_id=${encodeURIComponent(resourceId)}`, { headers: { Authorization: `Bearer ${getIdentityToken()}` }, signal });
+  const response = await fetch(`${apiBaseUrl}/dashboard/resources/details?resource_id=${encodeURIComponent(resourceId)}`, { headers: { Authorization: `Bearer ${getIdentityToken()}` }, signal });
   if (!response.ok) { const body = await response.json().catch(() => null) as { detail?: string } | null; throw new Error(body?.detail ?? "Unable to load resource details."); }
   return response.json() as Promise<ResourceDetails>;
 }
