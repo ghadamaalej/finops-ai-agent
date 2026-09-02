@@ -1,6 +1,6 @@
 import { getIdentityToken } from "../lib/entra";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "https://192.168.108.220/api";
 
 export type AgentAction = {
   id: string; recommendation_id: string | null; resource_id: string; resource_name: string; action: string | null;
@@ -34,8 +34,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) { const body = await response.json().catch(() => null) as { detail?: string } | null; throw new Error(body?.detail ?? "Unable to load agent data."); }
   return response.json() as Promise<T>;
 }
-export const getAgentOverview = (signal?: AbortSignal) => request<AgentOverviewData>("/api/agent/overview", { signal });
-export const getAgentActions = (page: number, pageSize = 4) => request<{ items: AgentAction[]; total: number }>(`/api/agent/actions?page=${page}&page_size=${pageSize}`);
-export const approveAgentRecommendation = (id: string) => request<AgentApprovalResponse>(`/api/agent/recommendations/${encodeURIComponent(id)}/approve`, { method: "POST", body: JSON.stringify({}) });
-export const rollbackAgentExecution = (id: string) => request<{ message: string }>(`/api/agent/executions/${encodeURIComponent(id)}/rollback`, { method: "POST" });
-export const askAgent = (message: string, history: Array<{ role: "user" | "assistant"; content: string }>, conversationContext?: Record<string, unknown>) => request<AgentChatResponse>("/api/agent/chat", { method: "POST", body: JSON.stringify({ message, history, conversation_context: conversationContext ?? {} }) });
+export const getAgentOverview = (signal?: AbortSignal) => request<AgentOverviewData>("/agent/overview", { signal });
+export const getAgentActions = (page: number, pageSize = 4) => request<{ items: AgentAction[]; total: number }>(`/agent/actions?page=${page}&page_size=${pageSize}`);
+export const approveAgentRecommendation = (id: string) => request<AgentApprovalResponse>(`/agent/recommendations/${encodeURIComponent(id)}/approve`, { method: "POST", body: JSON.stringify({}) });
+export const rollbackAgentExecution = (id: string) => request<{ message: string }>(`/agent/executions/${encodeURIComponent(id)}/rollback`, { method: "POST" });
+export const askAgent = (message: string, history: Array<{ role: "user" | "assistant"; content: string }>, conversationContext?: Record<string, unknown>) => request<AgentChatResponse>("/agent/chat", { method: "POST", body: JSON.stringify({ message, history, conversation_context: conversationContext ?? {} }) });

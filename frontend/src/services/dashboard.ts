@@ -1,6 +1,6 @@
 import { getIdentityToken } from "../lib/entra";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "https://192.168.108.220/api";
 
 export type DashboardSummary = {
   generated_at: string; subscription_id: string;
@@ -70,13 +70,13 @@ export async function getResourceDetails(resourceId: string, signal?: AbortSigna
 }
 
 export async function getDashboardSummary(signal?: AbortSignal): Promise<DashboardSummary> {
-  const response = await fetch(`${apiBaseUrl}/api/dashboard/summary`, { headers: { Authorization: `Bearer ${getIdentityToken()}` }, signal });
+  const response = await fetch(`${apiBaseUrl}/dashboard/summary`, { headers: { Authorization: `Bearer ${getIdentityToken()}` }, signal });
   if (!response.ok) { const body = await response.json().catch(() => null) as { detail?: string } | null; throw new Error(body?.detail ?? "Unable to load dashboard data."); }
   return response.json() as Promise<DashboardSummary>;
 }
 
 export async function refreshDashboardCosts(azureAccessToken: string): Promise<DashboardRefreshResult> {
-  const response = await fetch(`${apiBaseUrl}/api/dashboard/refresh`, {
+  const response = await fetch(`${apiBaseUrl}/dashboard/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${getIdentityToken()}` },
     body: JSON.stringify({ azure_access_token: azureAccessToken }),

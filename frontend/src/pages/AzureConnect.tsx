@@ -7,7 +7,7 @@ import { armScopes, clearConnectionTokens, getAzureManagementAccessToken, getIde
 
 type Subscription = { subscription_id: string; subscription_name?: string; state?: string };
 type FastApiError = { detail?: string | Array<{ loc?: Array<string | number>; msg?: string }> };
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "https://192.168.108.220/api";
 
 async function apiError(response: Response, fallback: string) {
   const body = await response.json().catch(() => null) as FastApiError | null;
