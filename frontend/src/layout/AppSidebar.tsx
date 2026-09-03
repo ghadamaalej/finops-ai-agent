@@ -5,16 +5,11 @@ import { Bot } from "lucide-react";
 
 // Assume these icons are imported from an icon library
 import {
-  BoxCubeIcon,
-  UserCircleIcon,
-  PageIcon,
   ChevronDownIcon,
   GridIcon,
   HorizontaLDots,
   ListIcon,
   PieChartIcon,
-  PlugInIcon,
-  TableIcon
 } from "../icons";
 import { useSidebar } from "../context/SidebarContext";
 import SidebarWidget from "./SidebarWidget";
