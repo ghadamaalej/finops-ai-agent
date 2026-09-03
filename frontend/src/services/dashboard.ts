@@ -63,9 +63,27 @@ export type ResourceDetails = {
   evidence: Record<string, unknown>;
 };
 
-export async function getResourceDetails(resourceId: string, signal?: AbortSignal): Promise<ResourceDetails> {
-  const response = await fetch(`${apiBaseUrl}/dashboard/resources/details?resource_id=${encodeURIComponent(resourceId)}`, { headers: { Authorization: `Bearer ${getIdentityToken()}` }, signal });
-  if (!response.ok) { const body = await response.json().catch(() => null) as { detail?: string } | null; throw new Error(body?.detail ?? "Unable to load resource details."); }
+export async function getResourceDetails(
+  resourceId: string,
+  azureAccessToken: string,
+  signal?: AbortSignal
+): Promise<ResourceDetails> {
+  const response = await fetch(
+    `${apiBaseUrl}/dashboard/resources/details?resource_id=${encodeURIComponent(resourceId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${getIdentityToken()}`,
+        "X-Azure-Access-Token": azureAccessToken,
+      },
+      signal,
+    }
+  );
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(body?.detail ?? "Unable to load resource details.");
+  }
+
   return response.json() as Promise<ResourceDetails>;
 }
 

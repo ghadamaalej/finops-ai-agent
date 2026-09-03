@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from app.services.azure_credential import DelegatedArmCredential
 from app.Collectors.resource_collector import ResourceCollector
 from app.services.resource_evidence import normalized_resource_id
 from pydantic import BaseModel, Field
@@ -139,12 +140,26 @@ def _runtime_status(resource):
     return "N/A"
 
 @router.get("/resources/details")
-async def resource_details(resource_id: str = Query(...), credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+async def resource_details(
+    resource_id: str = Query(...),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    azure_access_token: str = Header(..., alias="X-Azure-Access-Token"),
+):
     claims = validate_id_token(credentials.credentials)
+    azure_claims = validate_azure_management_token(azure_access_token)
+
+    if claims.get("oid") != azure_claims.get("oid"):
+        raise HTTPException(
+          status_code=401,
+          detail="Azure access token does not belong to the signed-in user",
+    )
+
     session = SessionLocal()
     try:
         subscription_id = connected_subscription(session, claims)
-        resources = ResourceCollector().collect(subscription_id)
+
+        credential = DelegatedArmCredential(azure_access_token)
+        resources = ResourceCollector(credential=credential).collect(subscription_id)
         resource = next((item for item in resources if normalized_resource_id(item.get("id")) == normalized_resource_id(resource_id)), None)
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found in the connected subscription")

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
+import { useMsal } from "@azure/msal-react";
+import { getAzureManagementAccessToken } from "../lib/entra";
 import { Activity, AlertTriangle, ChevronRight, Database, DollarSign, RefreshCw, Search, Server, ShieldCheck } from "lucide-react";
 import PageMeta from "../components/common/PageMeta";
 import { getDashboardSummary, getResourceDetails, getResourceInventory, type DashboardSummary, type ResourceDetails } from "../services/dashboard";
@@ -19,6 +21,7 @@ function Kpi({ label, value, detail, Icon }: { label: string; value: string; det
 }
 
 export default function ActiveResources() {
+  const { accounts } = useMsal();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -40,10 +43,52 @@ export default function ActiveResources() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { setPage(1); }, [query, type, group, region, status]);
   useEffect(() => {
-    if (!selectedId) { setDetails(null); return; }
-    setDetailsLoading(true); setDetailsError(""); setDetailsTab("Overview");
-    void getResourceDetails(selectedId).then(setDetails).catch((reason) => setDetailsError(reason instanceof Error ? reason.message : "Unable to load resource details.")).finally(() => setDetailsLoading(false));
-  }, [selectedId]);
+    if (!selectedId) {
+      setDetails(null);
+      return;
+    }
+
+    const account = accounts[0];
+
+    if (!account) {
+      setDetailsError(
+        "Your Microsoft sign-in session expired. Please sign in again."
+      );
+      return;
+    }
+
+    const controller = new AbortController();
+
+    setDetailsLoading(true);
+    setDetailsError("");
+    setDetailsTab("Overview");
+
+    void getAzureManagementAccessToken(account)
+      .then((azureAccessToken) =>
+        getResourceDetails(
+          selectedId,
+          azureAccessToken,
+          controller.signal
+        )
+      )
+      .then(setDetails)
+      .catch((reason) => {
+        if (!controller.signal.aborted) {
+          setDetailsError(
+            reason instanceof Error
+              ? reason.message
+              : "Unable to load resource details."
+          );
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setDetailsLoading(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [selectedId, accounts]);
 
   const inventory = inventoryPage.items;
   const costs = useMemo(() => new Map((summary?.cost_resources ?? []).map((item) => [item.resource_id.toLowerCase(), item])), [summary]);
