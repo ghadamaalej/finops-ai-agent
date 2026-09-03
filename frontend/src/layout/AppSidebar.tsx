@@ -42,47 +42,13 @@ const navItems: NavItem[] = [
     path: "/resources",
   },
   {
-    icon: <BoxCubeIcon />,
-    name: "Optimization",
-    subItems: [
-      { name: "Recommendations", path: "/optimization/recommendations" },
-      { name: "Waste Detection", path: "/optimization/waste" },
-      { name: "Rightsizing", path: "/optimization/rightsizing" },
-      { name: "Potential Savings", path: "/optimization/savings" },
-      { name: "History", path: "/optimization/history" },
-    ],
-  },
-  {
   icon: <Bot />,
   name: "FinOps Agent",
   subItems: [
     { name: "Agent Overview", path: "/agent" },
-    { name: "Ask Agent", path: "/agent/chat" },
-    { name: "Agent Runs", path: "/agent/runs" },
-    { name: "Memory", path: "/agent/memory" },
+    { name: "Ask Agent", path: "/agent/chat" }
   ],
 },
-
-  {
-    icon: <TableIcon />,
-    name: "Verification",
-    subItems: [
-      { name: "Overview", path: "/verification" },
-      { name: "Results", path: "/verification/results" },
-      { name: "Failed Actions", path: "/verification/failed" },
-      { name: "Realized Savings", path: "/verification/savings" },
-    ],
-  },
-  {
-    icon: <GridIcon />,
-    name: "Learning",
-    subItems: [
-      { name: "Overview", path: "/learning" },
-      { name: "Feedback", path: "/learning/feedback" },
-      { name: "Confidence Calibration", path: "/learning/calibration" },
-      { name: "Proposals", path: "/learning/proposals" },
-    ],
-  },
 ];
 
 const othersItems: NavItem[] = [
