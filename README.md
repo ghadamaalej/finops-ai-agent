@@ -354,28 +354,6 @@ python -m alembic revision --autogenerate -m "Description of changes"
 6. Execution logged with before/after metrics
 7. Cost impact tracked and reported
 
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙋 Support
-
-For questions, issues, or feedback:
-
-- **GitHub Issues** - [Report bugs or request features](https://github.com/ghadamaalej/finops-ai-agent/issues)
-- **GitHub Discussions** - [Start a discussion](https://github.com/ghadamaalej/finops-ai-agent/discussions)
-- **Email** - Submit inquiries via GitHub
-
 ## 🎓 Learning Resources
 
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
@@ -386,29 +364,14 @@ For questions, issues, or feedback:
 - [React Documentation](https://react.dev/)
 - [Tailwind CSS Documentation](https://tailwindcss.com/)
 
-## 📈 Roadmap
-
-- [ ] Advanced cost forecasting with ML models
-- [ ] Multi-cloud support (AWS, GCP)
-- [ ] Automated cost optimization workflows with risk assessment
-- [ ] Integration with ServiceNow and other ITSM platforms
-- [ ] Mobile application for on-the-go insights
-- [ ] Advanced RBAC and team management
-- [ ] Cost attribution and chargeback capabilities
-- [ ] Budget alerts and anomaly notifications
-- [ ] Custom optimization policies per team/project
-- [ ] Integration with third-party FinOps platforms
 
 ## ⭐ Show Your Support
 
 If this project has been helpful, please consider:
 - Giving it a star ⭐
 - Sharing it with others
-- Contributing improvements
 - Providing feedback and suggestions
 
 ---
-
-**Built with ❤️ by the FinOps AI Agent team**
 
 *Empowering organizations to optimize cloud costs through intelligent automation and AI-driven insights.*
